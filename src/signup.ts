@@ -1,59 +1,50 @@
-import crypto from "crypto";
-import pgp from "pg-promise";
-import { validateCpf } from "./validateCpf";
+import { databaseConnection } from "../database/dbConnection";
+import { signupRepository } from "../database/signupRepository";
+import { validateCpf } from "../utils/old_validateCpf";
+import { validateCarPlate } from "../utils/validateCarPlate";
+import { validateName } from "../utils/validateName";
+import { validateEmail } from "../utils/validateEmail";
 
-export async function signup (input: any): Promise<any> {
-	const connection = pgp()("postgres://postgres:123456@localhost:5432/app");
-	try {
-		const id = crypto.randomUUID();
+export async function signup(input: any): Promise<any> {
+  const { getConnection, finishConnection } = databaseConnection();
+  const { getUserByEmail, insertUserIntoDatabase } = signupRepository({
+    databaseConnection: getConnection(),
+  });
 
-		const [acc] = await connection.query("select * from cccat17.account where email = $1", [input.email]);
-		if (!acc) {
+  try {
+    if (!validateCpf(input.cpf)) {
+      throw new Error('Invalid cpf');
+    }
 
-			if (input.name.match(/[a-zA-Z] [a-zA-Z]+/)) {
-				if (input.email.match(/^(.+)@(.+)$/)) {
+    if (!validateEmail(input.email)) {
+      throw new Error('Invalid email');
+    }
 
-					if (validateCpf(input.cpf)) {
-						if (input.isDriver) {
-							if (input.carPlate.match(/[A-Z]{3}[0-9]{4}/)) {
-								await connection.query("insert into cccat17.account (account_id, name, email, cpf, car_plate, is_passenger, is_driver) values ($1, $2, $3, $4, $5, $6, $7)", [id, input.name, input.email, input.cpf, input.carPlate, !!input.isPassenger, !!input.isDriver]);
-								
-								const obj = {
-									accountId: id
-								};
-								return obj;
-							} else {
-								// invalid car plate
-								return -5;
-							}
-						} else {
-							await connection.query("insert into cccat17.account (account_id, name, email, cpf, car_plate, is_passenger, is_driver) values ($1, $2, $3, $4, $5, $6, $7)", [id, input.name, input.email, input.cpf, input.carPlate, !!input.isPassenger, !!input.isDriver]);
+    if (!validateName(input.name)) {
+      throw new Error('Invalid name');
+    }
 
-							const obj = {
-								accountId: id
-							};
-							return obj;
-						}
-					} else {
-						// invalid cpf
-						return -1;
-					}
-				} else {
-					// invalid email
-					return -2;
-				}
+    if (input.isDriver && !validateCarPlate(input.carPlate)) {
+      throw new Error('Invalid car plate');
+    }
 
-			} else {
-				// invalid name
-				return -3;
-			}
+    const account = await getUserByEmail(input.email);
+    if (account) {
+      throw new Error('Account already exists');
+    }
 
-		} else {
-			// already exists
-			return -4;
-		}
-
-	} finally {
-		await connection.$pool.end();
-	}
+    const newAccount = {
+      name: input.name,
+      email: input.email,
+      cpf: input.cpf,
+      carPlate: input.carPlate,
+      isPassenger: input.isPassenger,
+      isDriver: input.isDriver,
+    };
+    const accountId = await insertUserIntoDatabase(newAccount);
+    return { accountId };
+  } catch (error) {
+    finishConnection();
+    throw error;
+  }
 }
